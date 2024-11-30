@@ -4,16 +4,19 @@ from peft import PeftModel
 import torch
 import torch.nn.functional as F
 
+import json
+from tqdm import tqdm
+
 def load_models():
     # Load the draft model (small LoRA fine-tuned model)
     draft_model_path = "./qwen2.5_0.5B_lora_gsm8k"
-    base_draft_model_path = "/home/asperger/DPSD/models/Qwen2.5-0.5B-Instruct"
+    base_draft_model_path = "/home/asperger/DPSD/models/Qwen2.5-3B-Instruct"
     draft_tokenizer = AutoTokenizer.from_pretrained(base_draft_model_path, trust_remote_code=True)
     base_draft_model = AutoModelForCausalLM.from_pretrained(
         base_draft_model_path,
         trust_remote_code=True,
         torch_dtype=torch.float16,
-        device_map="auto"
+        device_map="cuda:0"
     )
     draft_model = PeftModel.from_pretrained(base_draft_model, draft_model_path)
 
@@ -35,8 +38,8 @@ def speculative_decoding(
     draft_tokenizer, 
     target_model, 
     target_tokenizer, 
-    max_length=256, 
-    gamma=8, 
+    max_length=128, 
+    gamma=4, 
     temp=1.0
 ):
     """
@@ -49,7 +52,7 @@ def speculative_decoding(
     draft_device = draft_model.device
     target_device = target_model.device
     prefix = draft_tokenizer(prompt, return_tensors="pt").input_ids.to(draft_device)
-    max_tokens = max_length
+    max_tokens = max_length + prefix.shape[1]
     total_draft_tokens = 0
     accepted_draft_tokens = 0
     
@@ -64,7 +67,7 @@ def speculative_decoding(
         )
         # Extract only the newly generated draft tokens
         draft_tokens = draft_outputs[:, prefix_len:]
-        
+
         # Step 2: Target model evaluates probabilities for the same sequence
         extended_inputs = torch.cat([prefix, draft_tokens], dim=1).to(target_device)
         target_outputs = target_model(extended_inputs)
@@ -72,8 +75,8 @@ def speculative_decoding(
         target_tokens = torch.argmax(target_logits, dim=-1)
         
         # Step 3: Verification process
-        n = gamma
-        for i in range(gamma):
+        n = gamma if len(draft_tokens) == gamma else len(draft_tokens)
+        for i in range(len(draft_tokens)):
             # Get the draft token at position `i` and calculate probabilities
             draft_token = draft_tokens[:, i]  # Token proposed by draft model
             target_token = target_tokens[:, i]
@@ -91,27 +94,42 @@ def speculative_decoding(
         
         if prefix.shape[1] >= max_tokens:
             break
-    
+        
+        if target_tokenizer.eos_token_id in prefix.tolist():
+            break
+
     draft_pass_rate = accepted_draft_tokens / total_draft_tokens * 100 if total_draft_tokens > 0 else 0
     print(f"passed rate: {draft_pass_rate}%")
     # Decode final result
     decoded_text = draft_tokenizer.decode(prefix.squeeze(0), skip_special_tokens=True)
-    return decoded_text
-
+    return decoded_text, draft_pass_rate
 
 def main():
+    # Model setup
     # Load models and tokenizers
     draft_model, draft_tokenizer, target_model, target_tokenizer = load_models()
 
-    # Input prompt
-    prompt = "James decides to run 3 sprints 3 times a week.  He runs 60 meters each sprint.  How many total meters does he run a week?"
+    # Input and output files
+    input_file = "data/gsm8k.jsonl"  # Input dataset file
+    total_rate = 0
 
-    # Perform speculative decoding
-    generated_text = speculative_decoding(
-        prompt, draft_model, draft_tokenizer, target_model, target_tokenizer, max_length=256
-    )
+    # Load all questions into memory
+    with open(input_file, 'r', encoding='utf-8') as infile:
+        data = [json.loads(line.strip()) for line in infile]
 
-    # print("Generated Text:", generated_text)
+    for i in tqdm(range(0, 10), desc="Processing Batches"):
+        # Prepare batch
+        questions = data[i]["question"]
 
-if __name__ == "__main__":
+        # Perform speculative decoding
+        generated_text, draft_pass_rate = speculative_decoding(
+            questions, draft_model, draft_tokenizer, target_model, target_tokenizer, max_length=128
+        )            
+
+        print(generated_text)
+        total_rate += draft_pass_rate
+    
+    print(total_rate) 
+
+if __name__ == '__main__':
     main()

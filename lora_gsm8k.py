@@ -9,6 +9,7 @@ def prepare_dataset(file_path):
     Load and split the dataset into training and validation sets (80% train, 20% eval).
     """
     dataset = load_dataset("json", data_files=file_path)["train"]
+    print(len(dataset))
     train_size = int(0.8 * len(dataset))  # 80% train
     eval_size = len(dataset) - train_size  # 20% eval
     train_dataset = dataset.select(range(train_size))
@@ -43,7 +44,7 @@ def main():
     model = AutoModelForCausalLM.from_pretrained(
         model_name_or_path,
         trust_remote_code=True,
-        device_map="auto",
+        device_map="cuda:0",
         torch_dtype=torch.float16,
     )
 
@@ -79,10 +80,10 @@ def main():
         save_steps=200,
         logging_dir="./logs",
         logging_steps=10,
-        per_device_train_batch_size=16,
-        per_device_eval_batch_size=16,
-        num_train_epochs=20,
-        gradient_accumulation_steps=32,
+        per_device_train_batch_size=3,
+        per_device_eval_batch_size=3,
+        num_train_epochs=50,
+        gradient_accumulation_steps=6,
         learning_rate=2e-5,
         fp16=True,
         load_best_model_at_end=True,

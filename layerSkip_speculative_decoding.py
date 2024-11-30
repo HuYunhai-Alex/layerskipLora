@@ -19,7 +19,7 @@ def load_models():
         torch_dtype=torch.float16,
         device_map="cuda:0"
     )
-    # draft_model = PeftModel.from_pretrained(base_draft_model, draft_model_path)
+    draft_model = PeftModel.from_pretrained(base_draft_model, draft_model_path)
 
     # Load the target model (large 7B model)
     target_model_path = "/home/asperger/DPSD/models/Qwen2.5-7B-Instruct"
@@ -31,7 +31,7 @@ def load_models():
         device_map="auto"
     )
 
-    return base_draft_model, draft_tokenizer, target_model, target_tokenizer
+    return draft_model, draft_tokenizer, target_model, target_tokenizer
 
 def speculative_decoding(
     prompt, 
